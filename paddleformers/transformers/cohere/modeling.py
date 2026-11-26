@@ -303,6 +303,24 @@ class CohereDecoderLayer(nn.Layer):
         return hidden_states
 
 
+class CohereLMHead(GeneralLMHead):
+    def __init__(self, config: CohereConfig):
+        super().__init__(config)
+        self.use_local_logits = (
+            config.tensor_model_parallel_size == 1
+            and not config.sequence_parallel
+            and not config.get("use_fused_head_and_loss_fn", False)
+        )
+
+    def forward(self, hidden_states, tensor_parallel_output=None):
+        if self.use_local_logits:
+            logits = paddle.matmul(hidden_states, self.weight, transpose_y=True)
+            if self.bias is not None:
+                logits = logits + self.bias
+            return logits
+        return super().forward(hidden_states, tensor_parallel_output)
+
+
 class CohereLMHeadPipe(GeneralLMHeadPipe):
     @property
     def embedding_weight(self):
@@ -609,7 +627,7 @@ class CohereForCausalLM(CoherePretrainedModel):
     def __init__(self, config: CohereConfig):
         super().__init__(config)
         self.model = CohereModel(config)
-        self.lm_head = GeneralLMHead(config)
+        self.lm_head = CohereLMHead(config)
         self.criterion = CriterionLayer(config)
         self.tie_weights()
 

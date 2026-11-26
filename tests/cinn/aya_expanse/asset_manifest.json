@@ -1,0 +1,10 @@
+{
+  "model": "aya_expanse",
+  "files": [
+    {"root": "checkpoint", "path": "checkpoint_manifest.json", "bytes": 9923, "sha256": "f02677b10b70e71dc77493630ab28dd98416ab3cf50338f3f92d74395a83c037", "manifest": true},
+    {"root": "resource", "path": "data/causal-128-20261124-a/train/manifest.json", "bytes": 1890, "sha256": "25efb807c39541dd6f29884eba2994afed504565bbb068e319595e8a0b5c9a24", "manifest": true},
+    {"root": "resource", "path": "data/causal-128-20261124-a/eval/manifest.json", "bytes": 1889, "sha256": "99a02ff1e88ae06c2ff1b360d9a09b31f95f87af1db301d9d12087a0689e9749", "manifest": true},
+    {"root": "resource", "path": "metadata/8ecc5547085e9fe2fab9a7afcf4f68bd23af006b/config.json", "bytes": 634, "sha256": "81b7c1977e7c57052496bcbd50e94837db24e8188a5dc98efa0f9518fda9de7a"},
+    {"root": "resource", "path": "metadata/8ecc5547085e9fe2fab9a7afcf4f68bd23af006b/model.safetensors.index.json", "bytes": 20990, "sha256": "deaecc92e00b66a2fdd24576148760e930dc39b6c5c0db8c3c3e34ecd8e0da8f"}
+  ]
+}
