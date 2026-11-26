@@ -66,9 +66,6 @@ def _restore_padding_query_rows(
         return causal_mask
 
     query_padding = attention_mask[:, cache_length : cache_length + seq_length] == 0
-    if not paddle.any(query_padding):
-        return causal_mask
-
     query_padding = query_padding.reshape([query_padding.shape[0], 1, query_padding.shape[1], 1])
     if causal_mask.dtype == paddle.bool:
         replacement = paddle.ones_like(causal_mask)
@@ -134,6 +131,15 @@ def _load_weight_map(model_dir):
         return json.load(f)["weight_map"]
 
 
+def _read_hf_tensor(shard, key):
+    if shard.get_slice(key).get_dtype() == "BF16":
+        import ml_dtypes
+
+        values = shard.get_tensor(key).astype(ml_dtypes.bfloat16, copy=False)
+        return paddle.to_tensor(values.view("uint16"))
+    return paddle.to_tensor(shard.get_tensor(key))
+
+
 def _iter_hf_tensors(model_dir):
     weight_map = _load_weight_map(model_dir)
     if weight_map is None:
@@ -146,7 +152,7 @@ def _iter_hf_tensors(model_dir):
         # the checkpoint dtype before conversion to a Paddle tensor.
         with safe_open(path, framework="np") as shard:
             for key in shard.keys():
-                yield key, paddle.to_tensor(shard.get_tensor(key))
+                yield key, _read_hf_tensor(shard, key)
         return
 
     file_to_keys = defaultdict(list)
@@ -155,7 +161,7 @@ def _iter_hf_tensors(model_dir):
     for filename in sorted(file_to_keys):
         with safe_open(os.path.join(model_dir, filename), framework="np") as shard:
             for key in sorted(file_to_keys[filename]):
-                yield key, paddle.to_tensor(shard.get_tensor(key))
+                yield key, _read_hf_tensor(shard, key)
 
 
 def _fuse_qkv_weights(q_weight, k_weight, v_weight, num_heads, num_key_value_heads):

@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/PaddlePaddle/PaddleFormers.git",
+  "branch": "develop",
+  "commit": "1d7c2679f24d9d245422afa4d59014cdd9689fd6",
+  "commit_date": "2026-11-24T17:19:44+08:00",
+  "remote_develop_verified_date_utc": "2026-11-25",
+  "local_source": ".worktrees/shieldgemma2-latest",
+  "patch": "paddleformers-shieldgemma2-cinn.patch",
+  "patch_sha256": "bad8da64798141eb288cdfecbbc78964b58e8fffc6a8ffdfffa0a1ec362683d1",
+  "changed_files": [
+    "paddleformers/transformers/gemma3/modeling.py",
+    "paddleformers/transformers/gemma3/multimodal_text_modeling.py",
+    "paddleformers/transformers/shieldgemma2/modeling.py"
+  ],
+  "preserved_diagnostic_baseline": "1d7c2679f24d9d245422afa4d59014cdd9689fd6",
+  "relevant_model_files_identical_between_baselines": true,
+  "scope": "real original text2/vision2 structural FP32 CINN parity; no safety accuracy claim"
+}

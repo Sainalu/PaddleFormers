@@ -1,0 +1,8 @@
+{
+  "model": "shieldgemma2",
+  "files": [
+    {"root": "checkpoint", "path": "checkpoint_manifest.json", "bytes": 2355, "sha256": "f6c233b7fccc54e634be3ca8b2173f69143841a3ae052c5541c7237072ea81c6", "manifest": true},
+    {"root": "resource", "path": "data/docling-structure-20261018/train-batches/manifest.json", "bytes": 3344, "sha256": "7130772095c2a6e41e48758b466bde89593d323e21a089714b2548c1e13b8a2c", "manifest": true},
+    {"root": "resource", "path": "data/docling-structure-20261018/eval-batches/manifest.json", "bytes": 3368, "sha256": "44776e9fd300fc697f913927ba15cb4620185dbecabf2d5013bcf92478201e53", "manifest": true}
+  ]
+}

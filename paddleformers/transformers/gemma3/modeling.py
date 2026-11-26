@@ -76,6 +76,8 @@ def _convert_hf_vision_tensor(target_key: str, tensor: paddle.Tensor) -> paddle.
 
 def _use_high_precision_cublas_for_fp32(tensor: paddle.Tensor) -> None:
     """Match Torch's default FP32 GEMM policy before multimodal computation."""
+    if not paddle.in_dynamic_mode():
+        return
     if tensor.dtype != paddle.float32 or not tensor.place.is_gpu_place():
         return
 
@@ -87,6 +89,8 @@ def _use_high_precision_cublas_for_fp32(tensor: paddle.Tensor) -> None:
 
     if core.get_cublas_switch():
         core.set_cublas_switch(False)
+    if core.get_cudnn_switch():
+        core.set_cudnn_switch(False)
 
 
 @dataclass
@@ -316,8 +320,8 @@ def token_type_ids_mask_function(token_type_ids: paddle.Tensor | None, image_gro
 
         bsz, seq_len = token_type_ids.shape
         max_idx = paddle.full_like(q_idx, seq_len - 1)
-        safe_q_idx = paddle.minimum(q_idx, max_idx)
-        safe_kv_idx = paddle.minimum(kv_idx, paddle.full_like(kv_idx, seq_len - 1))
+        safe_q_idx = paddle.where(q_idx < seq_len, q_idx, max_idx)
+        safe_kv_idx = paddle.where(kv_idx < seq_len, kv_idx, paddle.full_like(kv_idx, seq_len - 1))
 
         token_type_ids_expanded = token_type_ids.reshape([bsz, 1, 1, seq_len])
         image_group_ids_expanded = image_group_ids.reshape([bsz, 1, 1, seq_len])
@@ -623,12 +627,13 @@ class Gemma3Model(Gemma3PreTrainedModel):
         else:
             special_image_mask = input_ids == self.config.image_token_index
 
-        n_image_tokens = int(special_image_mask.astype("int64").sum().item())
-        n_image_features = int(image_features.shape[0] * image_features.shape[1])
-        if n_image_tokens != n_image_features:
-            raise ValueError(
-                f"Image features and image tokens do not match, tokens: {n_image_tokens}, features: {n_image_features}"
-            )
+        if paddle.in_dynamic_mode():
+            n_image_tokens = int(special_image_mask.astype("int64").sum().item())
+            n_image_features = int(image_features.shape[0] * image_features.shape[1])
+            if n_image_tokens != n_image_features:
+                raise ValueError(
+                    f"Image features and image tokens do not match, tokens: {n_image_tokens}, features: {n_image_features}"
+                )
         return special_image_mask.unsqueeze(-1).expand_as(inputs_embeds)
 
     def forward(

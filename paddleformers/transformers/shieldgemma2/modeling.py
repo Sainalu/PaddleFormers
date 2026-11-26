@@ -336,8 +336,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
     input_modalities = ("image", "text")
 
     def __init__(self, config: ShieldGemma2Config):
-        config.tie_word_embeddings = False
-        config.text_config.tie_word_embeddings = False
+        config.tie_word_embeddings = config.text_config.tie_word_embeddings
         super().__init__(config)
         self.yes_token_index = getattr(config, "yes_token_index", 10784)
         self.no_token_index = getattr(config, "no_token_index", 3771)
@@ -368,10 +367,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
             pretrained_model_name_or_path,
             config.text_config,
             model_prefix="model.language_model.",
-            # ShieldGemma2's HF checkpoint intentionally omits lm_head.  The
-            # Torch implementation initializes this task head in post_init;
-            # copying the tied embedding here would change its semantics.
-            include_lm_head=False,
+            include_lm_head=True,
             source_prefix="model.language_model.",
         )
 
@@ -391,7 +387,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
                 state_dict[name] = tensor.astype(target_state_dict[name].dtype)
         missing_keys, unexpected_keys = model.set_state_dict(state_dict)
         if missing_keys or unexpected_keys:
-            logger.warning(
+            raise ValueError(
                 f"HF ShieldGemma2 checkpoint load finished with missing keys {missing_keys} "
                 f"and unexpected keys {unexpected_keys}"
             )
@@ -425,6 +421,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
         logits_to_keep=0,
         **kwargs,
     ) -> ShieldGemma2ImageClassifierOutputWithNoAttention:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         outputs = super().forward(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -447,6 +444,13 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
         index_tensor = paddle.to_tensor([self.yes_token_index, self.no_token_index], dtype="int64")
         selected_logits = paddle.index_select(last_token_logits, index=index_tensor, axis=-1)
         probabilities = F.softmax(selected_logits, axis=-1)
+
+        if not return_dict:
+            if outputs.hidden_states is None:
+                result = (selected_logits, probabilities)
+            else:
+                result = (selected_logits, outputs.hidden_states, probabilities)
+            return ((outputs.loss,) + result) if outputs.loss is not None else result
 
         return ShieldGemma2ImageClassifierOutputWithNoAttention(
             loss=outputs.loss,

@@ -1,0 +1,158 @@
+diff --git a/paddleformers/transformers/gemma3/modeling.py b/paddleformers/transformers/gemma3/modeling.py
+index fa2b3bed..da347d73 100644
+--- a/paddleformers/transformers/gemma3/modeling.py
++++ b/paddleformers/transformers/gemma3/modeling.py
+@@ -76,6 +76,8 @@ def _convert_hf_vision_tensor(target_key: str, tensor: paddle.Tensor) -> paddle.
+ 
+ def _use_high_precision_cublas_for_fp32(tensor: paddle.Tensor) -> None:
+     """Match Torch's default FP32 GEMM policy before multimodal computation."""
++    if not paddle.in_dynamic_mode():
++        return
+     if tensor.dtype != paddle.float32 or not tensor.place.is_gpu_place():
+         return
+ 
+@@ -87,6 +89,8 @@ def _use_high_precision_cublas_for_fp32(tensor: paddle.Tensor) -> None:
+ 
+     if core.get_cublas_switch():
+         core.set_cublas_switch(False)
++    if core.get_cudnn_switch():
++        core.set_cudnn_switch(False)
+ 
+ 
+ @dataclass
+@@ -316,8 +320,8 @@ def token_type_ids_mask_function(token_type_ids: paddle.Tensor | None, image_gro
+ 
+         bsz, seq_len = token_type_ids.shape
+         max_idx = paddle.full_like(q_idx, seq_len - 1)
+-        safe_q_idx = paddle.minimum(q_idx, max_idx)
+-        safe_kv_idx = paddle.minimum(kv_idx, paddle.full_like(kv_idx, seq_len - 1))
++        safe_q_idx = paddle.where(q_idx < seq_len, q_idx, max_idx)
++        safe_kv_idx = paddle.where(kv_idx < seq_len, kv_idx, paddle.full_like(kv_idx, seq_len - 1))
+ 
+         token_type_ids_expanded = token_type_ids.reshape([bsz, 1, 1, seq_len])
+         image_group_ids_expanded = image_group_ids.reshape([bsz, 1, 1, seq_len])
+@@ -623,12 +627,13 @@ class Gemma3Model(Gemma3PreTrainedModel):
+         else:
+             special_image_mask = input_ids == self.config.image_token_index
+ 
+-        n_image_tokens = int(special_image_mask.astype("int64").sum().item())
+-        n_image_features = int(image_features.shape[0] * image_features.shape[1])
+-        if n_image_tokens != n_image_features:
+-            raise ValueError(
+-                f"Image features and image tokens do not match, tokens: {n_image_tokens}, features: {n_image_features}"
+-            )
++        if paddle.in_dynamic_mode():
++            n_image_tokens = int(special_image_mask.astype("int64").sum().item())
++            n_image_features = int(image_features.shape[0] * image_features.shape[1])
++            if n_image_tokens != n_image_features:
++                raise ValueError(
++                    f"Image features and image tokens do not match, tokens: {n_image_tokens}, features: {n_image_features}"
++                )
+         return special_image_mask.unsqueeze(-1).expand_as(inputs_embeds)
+ 
+     def forward(
+diff --git a/paddleformers/transformers/gemma3/multimodal_text_modeling.py b/paddleformers/transformers/gemma3/multimodal_text_modeling.py
+index 99d211bc..6349605b 100644
+--- a/paddleformers/transformers/gemma3/multimodal_text_modeling.py
++++ b/paddleformers/transformers/gemma3/multimodal_text_modeling.py
+@@ -66,9 +66,6 @@ def _restore_padding_query_rows(
+         return causal_mask
+ 
+     query_padding = attention_mask[:, cache_length : cache_length + seq_length] == 0
+-    if not paddle.any(query_padding):
+-        return causal_mask
+-
+     query_padding = query_padding.reshape([query_padding.shape[0], 1, query_padding.shape[1], 1])
+     if causal_mask.dtype == paddle.bool:
+         replacement = paddle.ones_like(causal_mask)
+@@ -134,6 +131,15 @@ def _load_weight_map(model_dir):
+         return json.load(f)["weight_map"]
+ 
+ 
++def _read_hf_tensor(shard, key):
++    if shard.get_slice(key).get_dtype() == "BF16":
++        import ml_dtypes
++
++        values = shard.get_tensor(key).astype(ml_dtypes.bfloat16, copy=False)
++        return paddle.to_tensor(values.view("uint16"))
++    return paddle.to_tensor(shard.get_tensor(key))
++
++
+ def _iter_hf_tensors(model_dir):
+     weight_map = _load_weight_map(model_dir)
+     if weight_map is None:
+@@ -146,7 +152,7 @@ def _iter_hf_tensors(model_dir):
+         # the checkpoint dtype before conversion to a Paddle tensor.
+         with safe_open(path, framework="np") as shard:
+             for key in shard.keys():
+-                yield key, paddle.to_tensor(shard.get_tensor(key))
++                yield key, _read_hf_tensor(shard, key)
+         return
+ 
+     file_to_keys = defaultdict(list)
+@@ -155,7 +161,7 @@ def _iter_hf_tensors(model_dir):
+     for filename in sorted(file_to_keys):
+         with safe_open(os.path.join(model_dir, filename), framework="np") as shard:
+             for key in sorted(file_to_keys[filename]):
+-                yield key, paddle.to_tensor(shard.get_tensor(key))
++                yield key, _read_hf_tensor(shard, key)
+ 
+ 
+ def _fuse_qkv_weights(q_weight, k_weight, v_weight, num_heads, num_key_value_heads):
+diff --git a/paddleformers/transformers/shieldgemma2/modeling.py b/paddleformers/transformers/shieldgemma2/modeling.py
+index 42285062..d1457dbe 100644
+--- a/paddleformers/transformers/shieldgemma2/modeling.py
++++ b/paddleformers/transformers/shieldgemma2/modeling.py
+@@ -336,8 +336,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
+     input_modalities = ("image", "text")
+ 
+     def __init__(self, config: ShieldGemma2Config):
+-        config.tie_word_embeddings = False
+-        config.text_config.tie_word_embeddings = False
++        config.tie_word_embeddings = config.text_config.tie_word_embeddings
+         super().__init__(config)
+         self.yes_token_index = getattr(config, "yes_token_index", 10784)
+         self.no_token_index = getattr(config, "no_token_index", 3771)
+@@ -368,10 +367,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
+             pretrained_model_name_or_path,
+             config.text_config,
+             model_prefix="model.language_model.",
+-            # ShieldGemma2's HF checkpoint intentionally omits lm_head.  The
+-            # Torch implementation initializes this task head in post_init;
+-            # copying the tied embedding here would change its semantics.
+-            include_lm_head=False,
++            include_lm_head=True,
+             source_prefix="model.language_model.",
+         )
+ 
+@@ -391,7 +387,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
+                 state_dict[name] = tensor.astype(target_state_dict[name].dtype)
+         missing_keys, unexpected_keys = model.set_state_dict(state_dict)
+         if missing_keys or unexpected_keys:
+-            logger.warning(
++            raise ValueError(
+                 f"HF ShieldGemma2 checkpoint load finished with missing keys {missing_keys} "
+                 f"and unexpected keys {unexpected_keys}"
+             )
+@@ -425,6 +421,7 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
+         logits_to_keep=0,
+         **kwargs,
+     ) -> ShieldGemma2ImageClassifierOutputWithNoAttention:
++        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+         outputs = super().forward(
+             input_ids=input_ids,
+             pixel_values=pixel_values,
+@@ -448,6 +445,13 @@ class ShieldGemma2ForImageClassification(Gemma3ForConditionalGeneration):
+         selected_logits = paddle.index_select(last_token_logits, index=index_tensor, axis=-1)
+         probabilities = F.softmax(selected_logits, axis=-1)
+ 
++        if not return_dict:
++            if outputs.hidden_states is None:
++                result = (selected_logits, probabilities)
++            else:
++                result = (selected_logits, outputs.hidden_states, probabilities)
++            return ((outputs.loss,) + result) if outputs.loss is not None else result
++
+         return ShieldGemma2ImageClassifierOutputWithNoAttention(
+             loss=outputs.loss,
+             logits=selected_logits,
