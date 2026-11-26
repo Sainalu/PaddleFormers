@@ -98,7 +98,7 @@ class SiglipAttention(nn.Layer):
         Each position attends to [0, seq_len) — the entire sequence.
         Follows Qwen3-VL's pattern for non-causal vision attention.
         """
-        indices = paddle.to_tensor([0, seq_len, 0, seq_len], dtype="int32")
+        indices = paddle.to_tensor([seq_len, seq_len, 0, 0], dtype="int32")
         return indices.reshape([1, 1, 1, 4]).expand([batch_size, self.num_heads, seq_len, 4])
 
     def forward(self, hidden_states, attention_mask=None):

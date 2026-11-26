@@ -59,6 +59,8 @@ class AyaVisionProcessor(ProcessorMixin):
         **kwargs,
     ):
         del kwargs
+        if chat_template is None:
+            chat_template = getattr(tokenizer, "chat_template", None)
         super().__init__(image_processor, tokenizer, chat_template=chat_template)
 
         self.image_token = image_token
@@ -136,6 +138,7 @@ class AyaVisionProcessor(ProcessorMixin):
             if hasattr(self.image_processor, "fetch_images"):
                 images = self.image_processor.fetch_images(images)
             images = make_flat_list_of_images(images)
+            output_kwargs["images_kwargs"].setdefault("return_tensors", None)
             image_inputs = self.image_processor(images=images, **output_kwargs["images_kwargs"])
             num_patches = self._to_int_list(image_inputs.pop("num_patches"))
 

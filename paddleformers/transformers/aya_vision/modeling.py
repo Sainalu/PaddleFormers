@@ -115,6 +115,31 @@ class AyaVisionCriterionLayer(CriterionLayer):
         return super().forward(logits, labels, loss_mask=loss_mask)
 
 
+class AyaVisionLMHead(GeneralLMHead):
+    def __init__(self, config):
+        super().__init__(config)
+        self._static_matmul = (
+            config.tensor_model_parallel_size == 1
+            and not config.sequence_parallel
+            and not config.get("use_fused_head_and_loss_fn", False)
+        )
+
+    def forward(self, hidden_states, tensor_parallel_output=None):
+        if not paddle.in_dynamic_mode() and self._static_matmul:
+            logits = paddle.matmul(hidden_states, self.weight, transpose_y=True)
+            return logits + self.bias if self.bias is not None else logits
+        return super().forward(hidden_states, tensor_parallel_output)
+
+
+class AyaVisionEmbedding(nn.Embedding):
+    def forward(self, input_ids):
+        hidden_states = nn.functional.embedding(input_ids, self.weight, padding_idx=None)
+        if self._padding_idx >= 0:
+            padding_mask = (input_ids == self._padding_idx).unsqueeze(-1)
+            hidden_states = paddle.where(padding_mask, hidden_states.detach(), hidden_states)
+        return hidden_states
+
+
 class AyaVisionPreTrainedModel(PretrainedModel):
     config_class = AyaVisionConfig
     base_model_prefix = "model"
@@ -286,6 +311,13 @@ class AyaVisionModel(AyaVisionPreTrainedModel):
         self.vision_tower = SiglipVisionModel(config.vision_config)
         self.multi_modal_projector = AyaVisionMultiModalProjector(config)
         self.language_model = Cohere2Model(config.text_config)
+        embeddings = self.language_model.embed_tokens
+        self.language_model.embed_tokens = AyaVisionEmbedding(
+            config.text_config.vocab_size,
+            config.text_config.hidden_size,
+            padding_idx=config.text_config.pad_token_id,
+            _weight=embeddings.weight,
+        )
 
     def get_input_embeddings(self):
         return self.language_model.get_input_embeddings()
@@ -332,13 +364,14 @@ class AyaVisionModel(AyaVisionPreTrainedModel):
             special_image_mask = (inputs_embeds == image_token_embed).all(axis=-1)
         else:
             special_image_mask = input_ids == self.config.image_token_index
-        n_image_tokens = int(special_image_mask.astype("int64").sum().item())
         flat_image_features = image_features.reshape([-1, image_features.shape[-1]])
-        if n_image_tokens != flat_image_features.shape[0]:
-            raise ValueError(
-                f"Image features and image tokens do not match, tokens: {n_image_tokens}, "
-                f"features: {flat_image_features.shape[0]}"
-            )
+        if paddle.in_dynamic_mode():
+            n_image_tokens = int(special_image_mask.astype("int64").sum().item())
+            if n_image_tokens != flat_image_features.shape[0]:
+                raise ValueError(
+                    f"Image features and image tokens do not match, tokens: {n_image_tokens}, "
+                    f"features: {flat_image_features.shape[0]}"
+                )
         indices = paddle.nonzero(special_image_mask)
         scattered = paddle.scatter_nd(indices, flat_image_features.astype(inputs_embeds.dtype), inputs_embeds.shape)
         keep_mask = (~special_image_mask).unsqueeze(-1).astype(inputs_embeds.dtype)
@@ -441,7 +474,7 @@ class AyaVisionForConditionalGeneration(AyaVisionPreTrainedModel):
         ):
             if hasattr(config, attr):
                 setattr(config.text_config, attr, getattr(config, attr))
-        self.lm_head = GeneralLMHead(config.text_config)
+        self.lm_head = AyaVisionLMHead(config.text_config)
         self.criterion = AyaVisionCriterionLayer(config)
         if config.tie_word_embeddings:
             self.tie_weights()
@@ -517,6 +550,7 @@ class AyaVisionForConditionalGeneration(AyaVisionPreTrainedModel):
             slice_indices = logits_to_keep
         hidden_states = hidden_states[:, slice_indices, :]
         logits = self.lm_head(hidden_states)
+        logits = logits * self.config.text_config.logit_scale
         loss = None
         if labels is not None:
             loss = self.criterion(logits, labels, loss_mask=loss_mask)

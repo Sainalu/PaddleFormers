@@ -1,0 +1,9 @@
+{
+  "model": "aya_vision",
+  "files": [
+    {"root": "checkpoint", "path": "checkpoint_manifest.json", "bytes": 33571, "sha256": "c5083d796a5e942af70e60d87d5d24b7179363fcea68cce0d82d2a3bea03bd84", "manifest": true},
+    {"root": "resource", "path": "data/fixed_1024_20261124T0727Z/manifest.json", "bytes": 12453, "sha256": "736336c82f16be32fbd80c80fee0603b6c0792bcac4fbe93233694af618ca56c", "manifest": true},
+    {"root": "resource", "path": "metadata/config.json", "bytes": 1171, "sha256": "124b90dcbb6de8ec1878cae6485f531bd06373cfec5ba35f24802b6d519891f8"},
+    {"root": "resource", "path": "metadata/model.safetensors.index.json", "bytes": 71788, "sha256": "9d4870681090af7f955004589dfd638a12fe4e2d4d438d07b834104c617c511d"}
+  ]
+}
