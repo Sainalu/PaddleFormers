@@ -111,8 +111,9 @@ class GraniteRotaryEmbedding(nn.Layer):
         inv_freq = 1.0 / (base ** (paddle.arange(0, dim, 2, dtype=paddle.int64).astype("float32").to(device) / dim))
         return inv_freq, 1.0
 
-    @dynamic_rope_update
-    def forward(self, x: paddle.Tensor, position_ids: paddle.Tensor) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    def _forward_with_dynamic_update(
+        self, x: paddle.Tensor, position_ids: paddle.Tensor
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
         with paddle.amp.auto_cast(enable=False):
             inv_freq_expanded = self.inv_freq[None, :, None].astype("float32").expand([position_ids.shape[0], -1, 1])
             position_ids_expanded = position_ids[:, None, :].astype("float32")
@@ -121,6 +122,17 @@ class GraniteRotaryEmbedding(nn.Layer):
             cos = emb.cos() * self.attention_scaling
             sin = emb.sin() * self.attention_scaling
         return cos.astype(x.dtype), sin.astype(x.dtype)
+
+    @dynamic_rope_update
+    def _forward_with_rope_update(
+        self, x: paddle.Tensor, position_ids: paddle.Tensor
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        return self._forward_with_dynamic_update(x, position_ids)
+
+    def forward(self, x: paddle.Tensor, position_ids: paddle.Tensor) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        if self.rope_type == "default":
+            return self._forward_with_dynamic_update(x, position_ids)
+        return self._forward_with_rope_update(x, position_ids)
 
 
 class GraniteAttention(nn.Layer):
@@ -573,6 +585,11 @@ class GraniteForCausalLM(GranitePretrainedModel):
         self.model = GraniteModel(config)
         self.lm_head = GeneralLMHead(config)
         self.criterion = CriterionLayer(config)
+        self._direct_lm_head = (
+            config.tensor_model_parallel_size == 1
+            and not config.sequence_parallel
+            and not config.get("use_fused_head_and_loss_fn", False)
+        )
         self.tie_weights()
 
     def forward(
@@ -603,7 +620,13 @@ class GraniteForCausalLM(GranitePretrainedModel):
             attn_mask_startend_row_indices=attn_mask_startend_row_indices,
         )
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states) / self.config.logits_scaling
+        if self._direct_lm_head:
+            logits = paddle.matmul(hidden_states, self.lm_head.weight, transpose_y=True)
+            if self.lm_head.bias is not None:
+                logits = logits + self.lm_head.bias
+        else:
+            logits = self.lm_head(hidden_states)
+        logits = logits / self.config.logits_scaling
 
         loss = None
         if labels is not None:

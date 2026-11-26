@@ -1,0 +1,8 @@
+{
+  "model": "granite32",
+  "files": [
+    {"root": "checkpoint", "path": "checkpoint_manifest.json", "bytes": 2410, "sha256": "fdb27c14c1f086df63f45ba6ccab054f2693515ba876c3d635b2285f63cf8a9d", "manifest": true},
+    {"root": "resource", "path": "data/causal-128/train/manifest.json", "bytes": 1849, "sha256": "e2c74dc5589feb72a7d526009e4ed225aae70d6c5574118792ddd47ae749b068", "manifest": true},
+    {"root": "resource", "path": "data/causal-128/eval/manifest.json", "bytes": 1847, "sha256": "ea44a8980e8d9b76f9d2f69418a28518bc344af5574c03ac12837da0750d5313", "manifest": true}
+  ]
+}

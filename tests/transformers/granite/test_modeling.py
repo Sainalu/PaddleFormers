@@ -19,8 +19,10 @@ import unittest
 
 import numpy as np
 import paddle
+from paddle.static import InputSpec
 
 from paddleformers.transformers import GraniteConfig, GraniteForCausalLM, GraniteModel
+from paddleformers.transformers.granite.modeling import rotate_half
 from tests.testing_utils import gpu_device_initializer, require_package
 from tests.transformers.test_configuration_common import ConfigTester
 from tests.transformers.test_generation_utils import GenerationTesterMixin
@@ -30,6 +32,15 @@ from tests.transformers.test_modeling_common import (
     ids_tensor,
     random_attention_mask,
 )
+
+
+class GraniteLogitsStaticWrapper(paddle.nn.Layer):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids):
+        return self.model(input_ids=input_ids, use_cache=False, return_dict=False)[0]
 
 
 class GraniteModelTester:
@@ -398,3 +409,64 @@ class GraniteCompatibilityTest(unittest.TestCase):
                     rtol=1e-2,
                 )
             )
+
+
+class GraniteCinnRegressionTest(unittest.TestCase):
+    def test_rotary_half_forward_and_gradient(self):
+        original_device = paddle.get_device()
+        paddle.set_device("cpu")
+        try:
+            for heads in (8, 32):
+                with self.subTest(heads=heads):
+                    shape = [1, heads, 128, 64]
+                    count = int(np.prod(shape))
+                    values = paddle.arange(count, dtype="float32").reshape(shape) / count
+                    expected_input = values.detach().clone()
+                    actual_input = values.detach().clone()
+                    expected_input.stop_gradient = False
+                    actual_input.stop_gradient = False
+                    expected = paddle.concat(
+                        [-expected_input[..., 32:], expected_input[..., :32]], axis=-1
+                    )
+                    actual = rotate_half(actual_input)
+                    weights = paddle.cos(values)
+                    (expected * weights).sum().backward()
+                    (actual * weights).sum().backward()
+                    np.testing.assert_array_equal(expected.numpy(), actual.numpy())
+                    np.testing.assert_array_equal(expected_input.grad.numpy(), actual_input.grad.numpy())
+        finally:
+            paddle.set_device(original_device)
+
+    def test_tp1_static_logits_match_dynamic(self):
+        original_device = paddle.get_device()
+        paddle.set_device("cpu")
+        try:
+            config = GraniteConfig(
+                vocab_size=32,
+                hidden_size=16,
+                intermediate_size=32,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                num_key_value_heads=1,
+                max_position_embeddings=8,
+                tie_word_embeddings=True,
+                _attn_implementation="eager",
+                use_cache=False,
+            )
+            model = GraniteForCausalLM(config).eval()
+            input_ids = paddle.arange(4, dtype="int64").reshape([1, 4])
+            wrapper = GraniteLogitsStaticWrapper(model).eval()
+            with paddle.no_grad():
+                dynamic_logits = wrapper(input_ids)
+            static_wrapper = paddle.jit.to_static(
+                wrapper,
+                input_spec=[InputSpec([1, 4], dtype="int64")],
+                full_graph=True,
+            )
+            with paddle.no_grad():
+                static_logits = static_wrapper(input_ids)
+            np.testing.assert_allclose(
+                dynamic_logits.numpy(), static_logits.numpy(), atol=1e-6, rtol=1e-6
+            )
+        finally:
+            paddle.set_device(original_device)
