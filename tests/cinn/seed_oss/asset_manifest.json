@@ -1,0 +1,8 @@
+{
+  "model": "seed_oss",
+  "files": [
+    {"root": "checkpoint", "path": "checkpoint_manifest.json", "bytes": 13368, "sha256": "f5e85d98a10e45991ba2bdab563de1fad60ce3fd9d6cdc29f3480232b041a43e", "manifest": true},
+    {"root": "resource", "path": "data/causal-128/train/manifest.json", "bytes": 1965, "sha256": "50bc228678496dff1aebe5d3af4536019183ab18845316fe93a012a7fb363569", "manifest": true},
+    {"root": "resource", "path": "data/causal-128/eval/manifest.json", "bytes": 1964, "sha256": "e10759be8abb58059321f3e1471d62a37d6d763397322e146298084d6879b30d", "manifest": true}
+  ]
+}

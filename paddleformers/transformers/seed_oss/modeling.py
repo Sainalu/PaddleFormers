@@ -474,6 +474,7 @@ class SeedOssModel(SeedOssPretrainedModel):
             embedding_dim=config.hidden_size,
             padding_idx=config.pad_token_id,
         )
+        self._hf_padding_idx = config.pad_token_id if config.tensor_model_parallel_size == 1 else None
         self.layers = nn.LayerList(
             [SeedOssDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
@@ -511,7 +512,12 @@ class SeedOssModel(SeedOssPretrainedModel):
 
         if inputs_embeds is None:
             batch_size, seq_length = input_ids.shape
-            inputs_embeds = self.embed_tokens(input_ids)
+            if self._hf_padding_idx is None:
+                inputs_embeds = self.embed_tokens(input_ids)
+            else:
+                inputs_embeds = nn.functional.embedding(input_ids, self.embed_tokens.weight)
+                padding_mask = (input_ids == self._hf_padding_idx).unsqueeze(-1)
+                inputs_embeds = paddle.where(padding_mask, inputs_embeds.detach(), inputs_embeds)
         else:
             batch_size, seq_length = inputs_embeds.shape[:2]
 
@@ -582,6 +588,11 @@ class SeedOssForCausalLM(SeedOssPretrainedModel):
         self.model = SeedOssModel(config)
         self.lm_head = GeneralLMHead(config)
         self.criterion = CriterionLayer(config)
+        self._plain_lm_head = (
+            config.tensor_model_parallel_size == 1
+            and not config.sequence_parallel
+            and not config.get("use_fused_head_and_loss_fn", False)
+        )
         self.tie_weights()
 
     def forward(
@@ -613,7 +624,12 @@ class SeedOssForCausalLM(SeedOssPretrainedModel):
             attn_mask_startend_row_indices=attn_mask_startend_row_indices,
         )
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        if self._plain_lm_head:
+            logits = paddle.matmul(hidden_states, self.lm_head.weight, transpose_y=True)
+            if self.lm_head.bias is not None:
+                logits = logits + self.lm_head.bias
+        else:
+            logits = self.lm_head(hidden_states)
 
         loss = None
         if labels is not None:
